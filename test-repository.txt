@@ -1,2 +1,14 @@
-# Учебный файл-заглушка для проверки пути в этапе 1.
-# Формат графа и анализ зависимостей реализуются на последующих этапах.
+Package: demo-app
+Version: 1.2.3-1
+Architecture: amd64
+Pre-Depends: init-system-helpers (>= 1.60)
+Depends: libc6 (>= 2.35), demo-core (>= 1.0) | demo-core-compat,
+ demo-data (= 1.2.3-1) [amd64]
+Description: demo fixture package
+ This local Packages-format record is used by stage 2 tests.
+
+Package: demo-core
+Version: 1.4-2
+Architecture: amd64
+Depends: libgcc-s1 (>= 3.0)
+Description: a sample dependency

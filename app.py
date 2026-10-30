@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Вариант 26, этап 1: чтение и проверка YAML-конфигурации CLI-прототипа."""
+"""Вариант 26: YAML CLI-прототип и получение прямых Ubuntu APT-зависимостей."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+from apt_index import AptIndexError, PackageInfo, get_package_from_file, get_package_from_url
 
 try:
     import yaml
@@ -90,6 +92,8 @@ def load_config(path: Path) -> Config:
     test_mode = _required_bool(data, "test_mode")
     if test_mode:
         repo_path = Path(repository).expanduser()
+        if not repo_path.is_absolute():
+            repo_path = path.expanduser().resolve().parent / repo_path
         if not repo_path.is_file():
             raise ConfigError(f"'repository': в тестовом режиме укажите существующий файл; не найден: {repo_path}")
     else:
@@ -121,16 +125,45 @@ def print_config(config: Config) -> None:
     print(f"filter_substring: {config.filter_substring!r}")
 
 
+def print_dependencies(package: PackageInfo) -> None:
+    print(f"\nПрямые зависимости Ubuntu APT для пакета {package.name} (версия {package.version}):")
+    if package.pre_depends:
+        print("Pre-Depends:")
+        for dependency in package.pre_depends:
+            print(f"  - {dependency}")
+    if package.depends:
+        print("Depends:")
+        for dependency in package.depends:
+            print(f"  - {dependency}")
+    if not package.pre_depends and not package.depends:
+        print("  Прямых зависимостей не указано.")
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Минимальный CLI-прототип (вариант 26, этап 1)")
+    parser = argparse.ArgumentParser(description="Вариант 26: CLI-прототип и прямые зависимости Ubuntu APT")
     parser.add_argument("-c", "--config", default="config.yaml", help="путь к YAML-конфигурации (по умолчанию config.yaml)")
     args = parser.parse_args(argv)
+    config_path = Path(args.config).expanduser()
     try:
-        config = load_config(Path(args.config))
+        config = load_config(config_path)
     except ConfigError as exc:
         print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
         return 2
+
     print_config(config)
+    try:
+        if config.test_mode:
+            repository_path = Path(config.repository).expanduser()
+            if not repository_path.is_absolute():
+                repository_path = config_path.resolve().parent / repository_path
+            package = get_package_from_file(repository_path, config.package_name)
+        else:
+            package = get_package_from_url(config.repository, config.package_name)
+    except AptIndexError as exc:
+        print(f"Ошибка получения данных APT: {exc}", file=sys.stderr)
+        return 1
+
+    print_dependencies(package)
     return 0
 
 

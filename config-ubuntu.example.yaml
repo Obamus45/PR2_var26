@@ -1,0 +1,7 @@
+# Example live Ubuntu repository; requires an Internet connection.
+package_name: bash
+repository: https://archive.ubuntu.com/ubuntu/dists/noble/
+test_mode: false
+output_file: bash-dependencies.svg
+ascii_tree: false
+filter_substring: ""
