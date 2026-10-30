@@ -12,6 +12,7 @@ import io
 import lzma
 import re
 import urllib.error
+from functools import lru_cache
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +21,11 @@ from urllib.parse import urlparse, urlunparse
 
 
 class AptIndexError(RuntimeError):
-    """Индекс недоступен, некорректен или не содержит целевой пакет."""
+    """Индекс недоступен или некорректен."""
+
+
+class PackageNotFoundError(AptIndexError):
+    """Индекс был прочитан, но в нём нет указанного имени пакета."""
 
 
 @dataclass(frozen=True)
@@ -100,6 +105,24 @@ def _find_package(stream: Iterable[str], package_name: str) -> PackageInfo | Non
     return None
 
 
+@lru_cache(maxsize=3)
+def _package_map(url: str) -> dict[str, PackageInfo]:
+    """Загружает и разбирает индекс один раз; пригодится при транзитивном обходе."""
+    raw = _fetch(url)
+    packages: dict[str, PackageInfo] = {}
+    for fields in _field_paragraphs(_decoded_lines(raw, url)):
+        name = fields.get("Package")
+        if not name or name in packages:
+            continue
+        packages[name] = PackageInfo(
+            name=name,
+            version=fields.get("Version", "не указана"),
+            pre_depends=_dependency_groups(fields.get("Pre-Depends", "")),
+            depends=_dependency_groups(fields.get("Depends", "")),
+        )
+    return packages
+
+
 def _decoded_lines(raw: bytes, source_name: str) -> Iterable[str]:
     # Определяем compression по сигнатуре, чтобы URL без расширения тоже работал.
     buffer = io.BytesIO(raw)
@@ -128,8 +151,7 @@ def _fetch(url: str) -> bytes:
 
 
 def _fetch_package_from_index(url: str, package_name: str) -> PackageInfo | None:
-    raw = _fetch(url)
-    return _find_package(_decoded_lines(raw, url), package_name)
+    return _package_map(url).get(package_name)
 
 
 def _is_package_index(url: str) -> bool:
@@ -181,7 +203,7 @@ def _try_suite_indexes(suite_root: str, package_name: str) -> PackageInfo:
     if not loaded_any_index:
         detail = "; ".join(failures[-3:])
         raise AptIndexError(f"Не удалось получить ни один Packages index для {suite_root}. {detail}")
-    raise AptIndexError(f"Пакет '{package_name}' не найден в компонентах suite: {', '.join(components)}")
+    raise PackageNotFoundError(f"Пакет '{package_name}' не найден в компонентах suite: {', '.join(components)}")
 
 
 def get_package_from_url(repository_url: str, package_name: str) -> PackageInfo:
@@ -189,7 +211,7 @@ def get_package_from_url(repository_url: str, package_name: str) -> PackageInfo:
     if _is_package_index(repository_url):
         result = _fetch_package_from_index(repository_url, package_name)
         if result is None:
-            raise AptIndexError(f"Пакет '{package_name}' не найден в индексе {repository_url}")
+            raise PackageNotFoundError(f"Пакет '{package_name}' не найден в индексе {repository_url}")
         return result
 
     suite_root = _suite_root(repository_url)
@@ -216,5 +238,5 @@ def get_package_from_file(index_path: Path, package_name: str) -> PackageInfo:
         raise AptIndexError(f"Не удалось прочитать тестовый APT-индекс {index_path}: {exc}") from exc
     result = _find_package(_decoded_lines(raw, str(index_path)), package_name)
     if result is None:
-        raise AptIndexError(f"Пакет '{package_name}' не найден в тестовом APT-индексе {index_path}")
+        raise PackageNotFoundError(f"Пакет '{package_name}' не найден в тестовом APT-индексе {index_path}")
     return result

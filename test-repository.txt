@@ -1,14 +1,12 @@
-Package: demo-app
-Version: 1.2.3-1
-Architecture: amd64
-Pre-Depends: init-system-helpers (>= 1.60)
-Depends: libc6 (>= 2.35), demo-core (>= 1.0) | demo-core-compat,
- demo-data (= 1.2.3-1) [amd64]
-Description: demo fixture package
- This local Packages-format record is used by stage 2 tests.
+# Учебный ориентированный граф: PACKAGE: DEP1, DEP2
+# A образует ромбовидную зависимость и цикл A -> B/C -> D -> A.
+A: B, C
+B: D
+C: D, E
+D: A
+E:
 
-Package: demo-core
-Version: 1.4-2
-Architecture: amd64
-Depends: libgcc-s1 (>= 3.0)
-Description: a sample dependency
+# Отдельная цепочка и петля для демонстрационных тестов.
+F: G
+G:
+H: H

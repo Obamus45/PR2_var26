@@ -1,0 +1,6 @@
+package_name: A
+repository: ./test-repository.txt
+test_mode: true
+output_file: dependencies.svg
+ascii_tree: false
+filter_substring: C

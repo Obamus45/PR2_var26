@@ -1,7 +1,7 @@
-# Вариант 26 — демонстрационная конфигурация этапа 1
-package_name: demo-app
+# Вариант 26 — тестовый граф для этапа 3
+package_name: A
 repository: ./test-repository.txt
 test_mode: true
 output_file: dependencies.svg
-ascii_tree: true
+ascii_tree: false
 filter_substring: ""

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Вариант 26: YAML CLI-прототип и получение прямых Ubuntu APT-зависимостей."""
+"""Вариант 26: YAML CLI, Ubuntu APT и транзитивный граф зависимостей (этап 3)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,20 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from apt_index import AptIndexError, PackageInfo, get_package_from_file, get_package_from_url
+from apt_index import (
+    AptIndexError,
+    PackageInfo,
+    PackageNotFoundError,
+    get_package_from_file,
+    get_package_from_url,
+)
+from dependency_graph import (
+    DependencyGraph,
+    GraphError,
+    build_bfs_recursive,
+    flatten_apt_dependencies,
+    parse_test_repository,
+)
 
 try:
     import yaml
@@ -125,22 +138,63 @@ def print_config(config: Config) -> None:
     print(f"filter_substring: {config.filter_substring!r}")
 
 
-def print_dependencies(package: PackageInfo) -> None:
-    print(f"\nПрямые зависимости Ubuntu APT для пакета {package.name} (версия {package.version}):")
-    if package.pre_depends:
-        print("Pre-Depends:")
-        for dependency in package.pre_depends:
+def print_direct_dependencies(package_name: str, dependencies: tuple[str, ...]) -> None:
+    print(f"\nПрямые зависимости для пакета {package_name}:")
+    if dependencies:
+        for dependency in dependencies:
             print(f"  - {dependency}")
-    if package.depends:
-        print("Depends:")
-        for dependency in package.depends:
-            print(f"  - {dependency}")
-    if not package.pre_depends and not package.depends:
-        print("  Прямых зависимостей не указано.")
+    else:
+        print("  (нет)")
+
+
+def print_graph(graph: DependencyGraph) -> None:
+    print("\nТранзитивный граф зависимостей (список смежности):")
+    for package in graph.bfs_order:
+        dependencies = graph.edges[package]
+        print(f"  {package} -> {', '.join(dependencies) if dependencies else '(нет зависимостей)'}")
+    print("BFS order: " + " -> ".join(graph.bfs_order))
+
+
+def _build_test_graph(config: Config, config_path: Path) -> tuple[DependencyGraph, tuple[str, ...]]:
+    repository_path = Path(config.repository).expanduser()
+    if not repository_path.is_absolute():
+        repository_path = config_path.resolve().parent / repository_path
+    adjacency = parse_test_repository(repository_path)
+    if config.package_name not in adjacency:
+        raise GraphError(f"Корневой пакет '{config.package_name}' отсутствует в тестовом графе")
+    graph = build_bfs_recursive(
+        config.package_name,
+        lambda package: adjacency.get(package, ()),
+        config.filter_substring,
+    )
+    return graph, graph.edges[config.package_name]
+
+
+def _build_apt_graph(config: Config) -> tuple[DependencyGraph, tuple[str, ...], tuple[str, ...]]:
+    # Проверяем корень отдельно: если его нет, это ошибка конфигурации/выбора пакета,
+    # а не обычный неразрешённый виртуальный пакет на одном из нижних уровней.
+    root_info = get_package_from_url(config.repository, config.package_name)
+    info_cache: dict[str, PackageInfo] = {config.package_name: root_info}
+    unresolved: list[str] = []
+
+    def dependencies_for(package_name: str) -> tuple[str, ...]:
+        if package_name not in info_cache:
+            try:
+                info_cache[package_name] = get_package_from_url(config.repository, package_name)
+            except PackageNotFoundError:
+                # APT может задавать виртуальную зависимость через Provides; без
+                # выбора provider оставляем её узлом-листом, а не прерываем обход.
+                unresolved.append(package_name)
+                return ()
+        info = info_cache[package_name]
+        return flatten_apt_dependencies(info.pre_depends, info.depends)
+
+    graph = build_bfs_recursive(config.package_name, dependencies_for, config.filter_substring)
+    return graph, graph.edges[config.package_name], tuple(dict.fromkeys(unresolved))
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Вариант 26: CLI-прототип и прямые зависимости Ubuntu APT")
+    parser = argparse.ArgumentParser(description="Вариант 26: построение графа зависимостей Ubuntu APT")
     parser.add_argument("-c", "--config", default="config.yaml", help="путь к YAML-конфигурации (по умолчанию config.yaml)")
     args = parser.parse_args(argv)
     config_path = Path(args.config).expanduser()
@@ -153,17 +207,18 @@ def main(argv: list[str] | None = None) -> int:
     print_config(config)
     try:
         if config.test_mode:
-            repository_path = Path(config.repository).expanduser()
-            if not repository_path.is_absolute():
-                repository_path = config_path.resolve().parent / repository_path
-            package = get_package_from_file(repository_path, config.package_name)
+            graph, direct = _build_test_graph(config, config_path)
+            unresolved: tuple[str, ...] = ()
         else:
-            package = get_package_from_url(config.repository, config.package_name)
-    except AptIndexError as exc:
-        print(f"Ошибка получения данных APT: {exc}", file=sys.stderr)
+            graph, direct, unresolved = _build_apt_graph(config)
+    except (AptIndexError, GraphError) as exc:
+        print(f"Ошибка построения графа: {exc}", file=sys.stderr)
         return 1
 
-    print_dependencies(package)
+    print_direct_dependencies(config.package_name, direct)
+    print_graph(graph)
+    if unresolved:
+        print("\nУзлы без метаданных в выбранном репозитории (возможные виртуальные пакеты): " + ", ".join(unresolved))
     return 0
 
 
