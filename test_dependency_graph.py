@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dependency_graph import GraphError, build_bfs_recursive, parse_test_repository
+from dependency_graph import GraphError, build_bfs_recursive, invert_graph, parse_test_repository
 
 
 class DependencyGraphTests(unittest.TestCase):
@@ -18,6 +18,13 @@ class DependencyGraphTests(unittest.TestCase):
         self.assertEqual(graph.bfs_order, ("A", "B", "C", "D", "E"))
         self.assertEqual(graph.edges["D"], ("A",))  # цикл отображён, повторного обхода нет
         self.assertEqual(len(graph.edges), 5)
+
+    def test_reverse_graph_finds_direct_and_transitive_dependents(self):
+        adjacency = {"A": ("B",), "C": ("A",), "D": ("C",), "B": ()}
+        reverse = invert_graph(adjacency)
+        graph = build_bfs_recursive("B", lambda node: reverse[node])
+        self.assertEqual(graph.bfs_order, ("B", "A", "C", "D"))
+        self.assertEqual(graph.edges["B"], ("A",))
 
     def test_filter_excludes_matching_nodes_and_their_branches(self):
         adjacency = {"A": ("B", "C"), "B": ("D",), "C": ("E",), "D": (), "E": ()}

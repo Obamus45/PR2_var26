@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from apt_index import AptIndexError, _dependency_groups, get_package_from_file
+from apt_index import AptIndexError, PackageInfo, _dependency_groups, build_reverse_index, get_package_from_file
 
 
 FIXTURE = """Package: demo-app
@@ -39,6 +39,16 @@ class AptIndexTests(unittest.TestCase):
             "demo-core | demo-core-compat",
             "demo-data",
         ))
+
+    def test_builds_reverse_index_from_package_records(self):
+        packages = [
+            PackageInfo("app-a", "1", (), ("lib-b", "lib-c | lib-c-alt")),
+            PackageInfo("app-d", "1", ("lib-b",), ()),
+        ]
+        reverse = build_reverse_index(packages)
+        self.assertEqual(reverse["lib-b"], ("app-a", "app-d"))
+        self.assertEqual(reverse["lib-c"], ("app-a",))
+        self.assertEqual(reverse["lib-c-alt"], ("app-a",))
 
     def test_absent_package_is_a_clear_error(self):
         with self.assertRaisesRegex(AptIndexError, "не найден"):

@@ -15,14 +15,15 @@ from apt_index import (
     AptIndexError,
     PackageInfo,
     PackageNotFoundError,
-    get_package_from_file,
     get_package_from_url,
+    get_reverse_dependencies_from_url,
 )
 from dependency_graph import (
     DependencyGraph,
     GraphError,
     build_bfs_recursive,
     flatten_apt_dependencies,
+    invert_graph,
     parse_test_repository,
 )
 
@@ -32,7 +33,7 @@ except ImportError:  # Даём понятную ошибку, если зави
     yaml = None
 
 
-EXPECTED_KEYS = {
+REQUIRED_KEYS = {
     "package_name",
     "repository",
     "test_mode",
@@ -40,6 +41,8 @@ EXPECTED_KEYS = {
     "ascii_tree",
     "filter_substring",
 }
+OPTIONAL_KEYS = {"reverse_dependencies"}
+EXPECTED_KEYS = REQUIRED_KEYS | OPTIONAL_KEYS
 
 
 class ConfigError(ValueError):
@@ -54,6 +57,7 @@ class Config:
     output_file: str
     ascii_tree: bool
     filter_substring: str
+    reverse_dependencies: bool = False
 
 
 def _required_string(data: dict[str, Any], key: str) -> str:
@@ -91,7 +95,7 @@ def load_config(path: Path) -> Config:
     if not isinstance(data, dict):
         raise ConfigError("Корнем YAML-документа должен быть объект (набор ключей и значений)")
     unknown = sorted(set(data) - EXPECTED_KEYS)
-    missing = sorted(EXPECTED_KEYS - set(data))
+    missing = sorted(REQUIRED_KEYS - set(data))
     if unknown:
         raise ConfigError("Неизвестные параметры: " + ", ".join(map(str, unknown)))
     if missing:
@@ -124,8 +128,11 @@ def load_config(path: Path) -> Config:
     filter_substring = data.get("filter_substring")
     if not isinstance(filter_substring, str):
         raise ConfigError("'filter_substring': требуется строка (пустая строка отключает фильтрацию)")
+    reverse_dependencies = data.get("reverse_dependencies", False)
+    if type(reverse_dependencies) is not bool:
+        raise ConfigError("'reverse_dependencies': требуется YAML boolean true или false")
 
-    return Config(package_name, repository, test_mode, output_file, ascii_tree, filter_substring)
+    return Config(package_name, repository, test_mode, output_file, ascii_tree, filter_substring, reverse_dependencies)
 
 
 def print_config(config: Config) -> None:
@@ -136,10 +143,12 @@ def print_config(config: Config) -> None:
     print(f"output_file: {config.output_file}")
     print(f"ascii_tree: {str(config.ascii_tree).lower()}")
     print(f"filter_substring: {config.filter_substring!r}")
+    print(f"reverse_dependencies: {str(config.reverse_dependencies).lower()}")
 
 
-def print_direct_dependencies(package_name: str, dependencies: tuple[str, ...]) -> None:
-    print(f"\nПрямые зависимости для пакета {package_name}:")
+def print_direct_dependencies(package_name: str, dependencies: tuple[str, ...], reverse: bool = False) -> None:
+    heading = "Прямые обратные зависимости" if reverse else "Прямые зависимости"
+    print(f"\n{heading} для пакета {package_name}:")
     if dependencies:
         for dependency in dependencies:
             print(f"  - {dependency}")
@@ -147,8 +156,9 @@ def print_direct_dependencies(package_name: str, dependencies: tuple[str, ...]) 
         print("  (нет)")
 
 
-def print_graph(graph: DependencyGraph) -> None:
-    print("\nТранзитивный граф зависимостей (список смежности):")
+def print_graph(graph: DependencyGraph, reverse: bool = False) -> None:
+    title = "Транзитивный граф обратных зависимостей" if reverse else "Транзитивный граф зависимостей"
+    print(f"\n{title} (список смежности):")
     for package in graph.bfs_order:
         dependencies = graph.edges[package]
         print(f"  {package} -> {', '.join(dependencies) if dependencies else '(нет зависимостей)'}")
@@ -160,6 +170,8 @@ def _build_test_graph(config: Config, config_path: Path) -> tuple[DependencyGrap
     if not repository_path.is_absolute():
         repository_path = config_path.resolve().parent / repository_path
     adjacency = parse_test_repository(repository_path)
+    if config.reverse_dependencies:
+        adjacency = invert_graph(adjacency)
     if config.package_name not in adjacency:
         raise GraphError(f"Корневой пакет '{config.package_name}' отсутствует в тестовом графе")
     graph = build_bfs_recursive(
@@ -193,6 +205,16 @@ def _build_apt_graph(config: Config) -> tuple[DependencyGraph, tuple[str, ...], 
     return graph, graph.edges[config.package_name], tuple(dict.fromkeys(unresolved))
 
 
+def _build_reverse_apt_graph(config: Config) -> tuple[DependencyGraph, tuple[str, ...]]:
+    reverse_adjacency = get_reverse_dependencies_from_url(config.repository, config.package_name)
+    graph = build_bfs_recursive(
+        config.package_name,
+        lambda package: reverse_adjacency.get(package, ()),
+        config.filter_substring,
+    )
+    return graph, graph.edges[config.package_name]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Вариант 26: построение графа зависимостей Ubuntu APT")
     parser.add_argument("-c", "--config", default="config.yaml", help="путь к YAML-конфигурации (по умолчанию config.yaml)")
@@ -209,14 +231,17 @@ def main(argv: list[str] | None = None) -> int:
         if config.test_mode:
             graph, direct = _build_test_graph(config, config_path)
             unresolved: tuple[str, ...] = ()
+        elif config.reverse_dependencies:
+            graph, direct = _build_reverse_apt_graph(config)
+            unresolved = ()
         else:
             graph, direct, unresolved = _build_apt_graph(config)
     except (AptIndexError, GraphError) as exc:
         print(f"Ошибка построения графа: {exc}", file=sys.stderr)
         return 1
 
-    print_direct_dependencies(config.package_name, direct)
-    print_graph(graph)
+    print_direct_dependencies(config.package_name, direct, reverse=config.reverse_dependencies)
+    print_graph(graph, reverse=config.reverse_dependencies)
     if unresolved:
         print("\nУзлы без метаданных в выбранном репозитории (возможные виртуальные пакеты): " + ", ".join(unresolved))
     return 0

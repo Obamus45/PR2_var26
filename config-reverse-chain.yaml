@@ -1,0 +1,8 @@
+# Обратный обход цепочки F -> G: кто зависит от G?
+package_name: G
+repository: ./test-repository.txt
+test_mode: true
+output_file: dependencies.svg
+ascii_tree: false
+filter_substring: ""
+reverse_dependencies: true

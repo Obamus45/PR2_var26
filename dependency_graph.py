@@ -97,6 +97,17 @@ def build_bfs_recursive(
     return DependencyGraph(root=root, edges=edges, bfs_order=tuple(order))
 
 
+def invert_graph(adjacency: dict[str, Iterable[str]]) -> dict[str, tuple[str, ...]]:
+    """Строит обратный список смежности, сохраняя изолированные узлы."""
+    reverse: dict[str, list[str]] = {node: [] for node in adjacency}
+    for package, dependencies in adjacency.items():
+        for dependency in dependencies:
+            dependents = reverse.setdefault(dependency, [])
+            if package not in dependents:
+                dependents.append(package)
+    return {node: tuple(dependents) for node, dependents in reverse.items()}
+
+
 def flatten_apt_dependencies(pre_depends: Iterable[str], depends: Iterable[str]) -> tuple[str, ...]:
     """Преобразует группы Depends в имена узлов; альтернативы становятся отдельными рёбрами."""
     names: list[str] = []

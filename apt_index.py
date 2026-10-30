@@ -12,9 +12,9 @@ import io
 import lzma
 import re
 import urllib.error
-from functools import lru_cache
 import urllib.request
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO, Iterable, Iterator
 from urllib.parse import urlparse, urlunparse
@@ -204,6 +204,64 @@ def _try_suite_indexes(suite_root: str, package_name: str) -> PackageInfo:
         detail = "; ".join(failures[-3:])
         raise AptIndexError(f"Не удалось получить ни один Packages index для {suite_root}. {detail}")
     raise PackageNotFoundError(f"Пакет '{package_name}' не найден в компонентах suite: {', '.join(components)}")
+
+
+def build_reverse_index(packages: Iterable[PackageInfo]) -> dict[str, tuple[str, ...]]:
+    """Инвертирует прямые ребра: для каждого пакета перечисляет зависящие от него."""
+    reverse: dict[str, list[str]] = {}
+    for package in packages:
+        reverse.setdefault(package.name, [])
+        groups = (*package.pre_depends, *package.depends)
+        for group in groups:
+            for alternative in group.split("|"):
+                dependency = alternative.strip()
+                if dependency:
+                    dependents = reverse.setdefault(dependency, [])
+                    if package.name not in dependents:
+                        dependents.append(package.name)
+    return {name: tuple(dependents) for name, dependents in reverse.items()}
+
+
+def get_reverse_dependencies_from_url(repository_url: str, package_name: str) -> dict[str, tuple[str, ...]]:
+    """Читает индексы APT и возвращает обратный список смежности для всех их пакетов."""
+    if _is_package_index(repository_url):
+        package_maps = [_package_map(repository_url)]
+    else:
+        suite_root = _suite_root(repository_url)
+        if not suite_root:
+            raise AptIndexError(
+                "Для обратных зависимостей укажите Packages index или URL suite вида .../dists/noble/"
+            )
+        release = _fetch(suite_root + "Release").decode("utf-8", errors="replace")
+        fields = _release_fields(release)
+        components = fields.get("Components", "main universe restricted multiverse").split()
+        architectures = fields.get("Architectures", "amd64").split()
+        architecture = "amd64" if "amd64" in architectures else (architectures[0] if architectures else "amd64")
+        package_maps = []
+        errors: list[str] = []
+        for component in components:
+            base = f"{suite_root}{component}/binary-{architecture}/Packages"
+            for suffix in (".xz", ".gz", ".bz2", ""):
+                try:
+                    package_map = _package_map(base + suffix)
+                except AptIndexError as exc:
+                    errors.append(str(exc))
+                    continue
+                package_maps.append(package_map)
+                break
+        if not package_maps:
+            raise AptIndexError(
+                f"Не удалось получить индексы компонентов suite {suite_root}: " + "; ".join(errors[-3:])
+            )
+
+    packages: dict[str, PackageInfo] = {}
+    for package_map in package_maps:
+        for name, info in package_map.items():
+            packages.setdefault(name, info)
+    reverse = build_reverse_index(packages.values())
+    if package_name not in reverse:
+        raise PackageNotFoundError(f"Пакет '{package_name}' не найден в доступных APT-индексах")
+    return reverse
 
 
 def get_package_from_url(repository_url: str, package_name: str) -> PackageInfo:

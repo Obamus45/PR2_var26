@@ -1,0 +1,8 @@
+# Example reverse-dependency query within Ubuntu Noble main/amd64 Packages index.
+package_name: bash
+repository: https://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64/Packages.xz
+test_mode: false
+output_file: bash-reverse-dependencies.svg
+ascii_tree: false
+filter_substring: ""
+reverse_dependencies: true

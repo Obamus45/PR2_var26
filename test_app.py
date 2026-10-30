@@ -36,6 +36,7 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(config.package_name, "demo-app")
         self.assertTrue(config.test_mode)
         self.assertEqual(config.filter_substring, "")
+        self.assertFalse(config.reverse_dependencies)
 
     def test_package_name_must_be_valid(self):
         values = dict(self.values, package_name="bad package!")
@@ -70,6 +71,11 @@ class ConfigValidationTests(unittest.TestCase):
     def test_filter_must_be_string(self):
         values = dict(self.values, filter_substring=23)
         with self.assertRaisesRegex(ConfigError, "filter_substring"):
+            load_config(self.write_config(values))
+
+    def test_reverse_dependencies_flag_must_be_boolean(self):
+        values = dict(self.values, reverse_dependencies="yes")
+        with self.assertRaisesRegex(ConfigError, "reverse_dependencies"):
             load_config(self.write_config(values))
 
     def test_unknown_and_missing_parameters_are_reported(self):

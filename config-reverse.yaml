@@ -1,0 +1,8 @@
+# Вывод прямых и транзитивных обратных зависимостей пакета B
+package_name: B
+repository: ./test-repository.txt
+test_mode: true
+output_file: dependencies.svg
+ascii_tree: false
+filter_substring: ""
+reverse_dependencies: true

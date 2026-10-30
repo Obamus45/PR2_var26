@@ -1,0 +1,8 @@
+# Фильтр D исключает D и дальнейший обратный обход через него
+package_name: B
+repository: ./test-repository.txt
+test_mode: true
+output_file: dependencies.svg
+ascii_tree: false
+filter_substring: D
+reverse_dependencies: true
